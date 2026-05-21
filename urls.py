@@ -1,23 +1,36 @@
-from django.urls import path
-from rest_framework_simplejwt.views import TokenRefreshView
-from .views import (
-    RegisterView, LoginView, GoogleLoginView, LogoutView,
-    ForgotPasswordView, ResetPasswordView, UserProfileView,
-    AdminUserManagementView
+from django.contrib import admin
+from django.urls import path, include
+from django.conf import settings
+from django.conf.urls.static import static
+from rest_framework import permissions
+from drf_yasg.views import get_schema_view
+from drf_yasg import openapi
+
+schema_view = get_schema_view(
+    openapi.Info(
+        title="Task Management System API",
+        default_version='v1',
+        description="Comprehensive production-ready API documentation for managing tasks, teams, notifications, and comments.",
+        contact=openapi.Contact(email="support@taskmanager.com"),
+    ),
+    public=True,
+    permission_classes=(permissions.AllowAny,),
 )
 
 urlpatterns = [
-    # Auth flow
-    path('register', RegisterView.as_view(), name='auth-register'),
-    path('login', LoginView.as_view(), name='auth-login'),
-    path('google-login', GoogleLoginView.as_view(), name='auth-google-login'),
-    path('logout', LogoutView.as_view(), name='auth-logout'),
-    path('forgot-password', ForgotPasswordView.as_view(), name='auth-forgot-password'),
-    path('reset-password', ResetPasswordView.as_view(), name='auth-reset-password'),
-    path('token/refresh', TokenRefreshView.as_view(), name='auth-token-refresh'),
+    path('admin/', admin.site.path if hasattr(admin.site, 'path') else admin.site.urls),
     
-    # Profile & Admin User Management
-    path('profile', UserProfileView.as_view(), name='user-profile'),
-    path('admin/users', AdminUserManagementView.as_view(), name='admin-users-list'),
-    path('admin/users/<int:pk>', AdminUserManagementView.as_view(), name='admin-users-detail'),
+    # Swagger & ReDoc Docs
+    path('swagger<format>/', schema_view.without_ui(cache_timeout=0), name='schema-json'),
+    path('swagger/', schema_view.with_ui('swagger', cache_timeout=0), name='schema-swagger-ui'),
+    path('redoc/', schema_view.with_ui('redoc', cache_timeout=0), name='schema-redoc'),
+    
+    # API endpoints
+    path('api/auth/', include('apps.authentication.urls')),
+    path('api/tasks/', include('apps.tasks.urls')),
+    path('api/notifications/', include('apps.notifications.urls')),
 ]
+
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)

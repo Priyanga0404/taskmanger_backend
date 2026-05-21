@@ -1,73 +1,115 @@
-import uuid
-from django.db import models
-from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
+from typing import TYPE_CHECKING, Any, Optional, Union
+
+from django.contrib.auth import models as auth_models
+from django.db.models.manager import EmptyManager
+from django.utils.functional import cached_property
+
+from .settings import api_settings
+
+if TYPE_CHECKING:
+    from .tokens import Token
 
 
-class UserManager(BaseUserManager):
-    def create_user(self, email, password=None, **extra_fields):
-        if not email:
-            raise ValueError('The Email field must be set')
-        email = self.normalize_email(email)
-        extra_fields.setdefault('auth_provider', 'FORM')
-        extra_fields.setdefault('role', 'USER')
-        extra_fields.setdefault('is_active', True)
-        extra_fields.setdefault('is_verified', False)
-        
-        user = self.model(email=email, **extra_fields)
-        if password:
-            user.set_password(password)
-        else:
-            user.set_unusable_password()
-        user.save(using=self._db)
-        return user
+class TokenUser:
+    """
+    A dummy user class modeled after django.contrib.auth.models.AnonymousUser.
+    Used in conjunction with the `JWTStatelessUserAuthentication` backend to
+    implement single sign-on functionality across services which share the same
+    secret key.  `JWTStatelessUserAuthentication` will return an instance of this
+    class instead of a `User` model instance.  Instances of this class act as
+    stateless user objects which are backed by validated tokens.
+    """
 
-    def create_superuser(self, email, password=None, **extra_fields):
-        extra_fields.setdefault('is_staff', True)
-        extra_fields.setdefault('is_superuser', True)
-        extra_fields.setdefault('role', 'ADMIN')
-        extra_fields.setdefault('is_verified', True)
-        extra_fields.setdefault('is_active', True)
+    # User is always active since Simple JWT will never issue a token for an
+    # inactive user
+    is_active = True
 
-        if extra_fields.get('is_staff') is not True:
-            raise ValueError('Superuser must have is_staff=True.')
-        if extra_fields.get('is_superuser') is not True:
-            raise ValueError('Superuser must have is_superuser=True.')
+    _groups = EmptyManager(auth_models.Group)
+    _user_permissions = EmptyManager(auth_models.Permission)
 
-        return self.create_user(email, password, **extra_fields)
+    def __init__(self, token: "Token") -> None:
+        self.token = token
 
+    def __str__(self) -> str:
+        return f"TokenUser {self.id}"
 
-class User(AbstractBaseUser, PermissionsMixin):
-    ROLE_CHOICES = (
-        ('USER', 'User'),
-        ('ADMIN', 'Admin'),
-    )
-    PROVIDER_CHOICES = (
-        ('FORM', 'Email Form'),
-        ('GOOGLE', 'Google Sign-In'),
-    )
+    @cached_property
+    def id(self) -> str:
+        return self.token[api_settings.USER_ID_CLAIM]
 
-    uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
-    email = models.EmailField(unique=True, max_length=255)
-    first_name = models.CharField(max_length=100, blank=True, null=True)
-    last_name = models.CharField(max_length=100, blank=True, null=True)
-    auth_provider = models.CharField(max_length=20, choices=PROVIDER_CHOICES, default='FORM')
-    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='USER')
-    profile_image = models.TextField(blank=True, null=True)
-    
-    is_active = models.BooleanField(default=True)
-    is_verified = models.BooleanField(default=False)
-    is_staff = models.BooleanField(default=False)  # Required for Django Admin panel integration
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    @cached_property
+    def pk(self) -> str:
+        return self.id
 
-    objects = UserManager()
+    @cached_property
+    def username(self) -> str:
+        return self.token.get("username", "")
 
-    USERNAME_FIELD = 'email'
-    REQUIRED_FIELDS = []
+    @cached_property
+    def is_staff(self) -> bool:
+        return self.token.get("is_staff", False)
 
-    class Meta:
-        db_table = 'users'
+    @cached_property
+    def is_superuser(self) -> bool:
+        return self.token.get("is_superuser", False)
 
-    def __str__(self):
-        return self.email
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, TokenUser):
+            return NotImplemented
+        return self.id == other.id
+
+    def __ne__(self, other: object) -> bool:
+        return not self.__eq__(other)
+
+    def __hash__(self) -> int:
+        return hash(self.id)
+
+    def save(self) -> None:
+        raise NotImplementedError("Token users have no DB representation")
+
+    def delete(self) -> None:
+        raise NotImplementedError("Token users have no DB representation")
+
+    def set_password(self, raw_password: str) -> None:
+        raise NotImplementedError("Token users have no DB representation")
+
+    def check_password(self, raw_password: str) -> None:
+        raise NotImplementedError("Token users have no DB representation")
+
+    @property
+    def groups(self) -> auth_models.Group:
+        return self._groups
+
+    @property
+    def user_permissions(self) -> auth_models.Permission:
+        return self._user_permissions
+
+    def get_group_permissions(self, obj: Optional[object] = None) -> set:
+        return set()
+
+    def get_all_permissions(self, obj: Optional[object] = None) -> set:
+        return set()
+
+    def has_perm(self, perm: str, obj: Optional[object] = None) -> bool:
+        return False
+
+    def has_perms(self, perm_list: list[str], obj: Optional[object] = None) -> bool:
+        return False
+
+    def has_module_perms(self, module: str) -> bool:
+        return False
+
+    @property
+    def is_anonymous(self) -> bool:
+        return False
+
+    @property
+    def is_authenticated(self) -> bool:
+        return True
+
+    def get_username(self) -> str:
+        return self.username
+
+    def __getattr__(self, attr: str) -> Optional[Any]:
+        """This acts as a backup attribute getter for custom claims defined in Token serializers."""
+        return self.token.get(attr, None)

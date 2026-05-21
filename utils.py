@@ -1,54 +1,51 @@
+import hashlib
 import logging
-from django.core.mail import send_mail
+from calendar import timegm
+from datetime import datetime, timezone
+from typing import Callable
+
 from django.conf import settings
-from .models import Notification
-
-logger = logging.getLogger(__name__)
+from django.utils.functional import lazy
 
 
-def send_notification(user, title, message, type, send_email=True):
+def get_md5_hash_password(password: str) -> str:
     """
-    Creates a database notification record and optionally dispatches an HTML email.
+    Returns MD5 hash of the given password
     """
-    # 1. Create in-app Notification database record
-    notification = Notification.objects.create(
-        user=user,
-        title=title,
-        message=message,
-        type=type
-    )
-    
-    # 2. Optionally dispatch Email
-    if send_email and user.email:
-        subject = f"Notification: {title}"
-        email_body = f"""
-        <html>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-            <div style="max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; background-color: #f8fafc;">
-                <h2 style="color: #4f46e5; margin-top: 0;">Task Manager Update</h2>
-                <hr style="border: 0; border-top: 1px solid #e2e8f0; margin-bottom: 20px;">
-                <p style="font-size: 16px; font-weight: bold; color: #0f172a;">{title}</p>
-                <p style="font-size: 14px; color: #334155;">{message}</p>
-                <div style="margin-top: 30px; padding: 15px; background-color: #edf2f7; border-radius: 6px; font-size: 12px; color: #718096;">
-                    This is an automated system alert from your Task Management Dashboard.
-                </div>
-            </div>
-        </body>
-        </html>
-        """
-        
-        try:
-            send_mail(
-                subject=subject,
-                message=message,  # Text fallback
-                from_email=settings.EMAIL_HOST_USER if settings.EMAIL_HOST_USER else 'noreply@taskmanager.com',
-                recipient_list=[user.email],
-                html_message=email_body,
-                fail_silently=False
-            )
-            logger.info(f"Notification email successfully sent to {user.email}")
-        except Exception as e:
-            # Fallback log in case SMTP fails or is not configured
-            logger.error(f"Failed to send email to {user.email}: {str(e)}")
-            
-    return notification
+    return hashlib.md5(password.encode()).hexdigest().upper()
+
+
+def make_utc(dt: datetime) -> datetime:
+    if settings.USE_TZ and dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+
+    return dt
+
+
+def aware_utcnow() -> datetime:
+    dt = datetime.now(tz=timezone.utc)
+    if not settings.USE_TZ:
+        dt = dt.replace(tzinfo=None)
+
+    return dt
+
+
+def datetime_to_epoch(dt: datetime) -> int:
+    return timegm(dt.utctimetuple())
+
+
+def datetime_from_epoch(ts: float) -> datetime:
+    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+    if not settings.USE_TZ:
+        dt = dt.replace(tzinfo=None)
+
+    return dt
+
+
+def format_lazy(s: str, *args, **kwargs) -> str:
+    return s.format(*args, **kwargs)
+
+
+format_lazy: Callable = lazy(format_lazy, str)
+
+logger = logging.getLogger("rest_framework_simplejwt")
